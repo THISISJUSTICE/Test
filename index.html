@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Draw.io GitHub Pages Demo</title>
+  <style>
+    body { font: 16px/1.5 system-ui, sans-serif; max-width: 1050px; margin: 40px auto; padding: 0 20px; }
+    .mxgraph { border: 1px solid #ddd; border-radius: 8px; min-height: 450px; }
+  </style>
+</head>
+<body>
+  <h1>Architecture</h1>
+  <p>이 페이지는 저장소의 <code>Docs/Sample.drawio</code>를 직접 읽어 렌더링합니다.</p>
+  <div id="diagram" class="mxgraph"></div>
+  <script>
+    // GitHub Pages가 제공하는 현재 URL을 기준으로 원본 .drawio의 절대 주소 생성
+    const diagramUrl = new URL('./Docs/Sample.drawio', document.baseURI).href;
+    document.getElementById('diagram').setAttribute('data-mxgraph', JSON.stringify({
+      url: diagramUrl,
+      nav: true,
+      resize: true,
+      toolbar: 'zoom layers lightbox',
+      edit: '_blank'
+    }));
+  </script>
+  <script src="https://viewer.diagrams.net/js/viewer-static.min.js"></script>
+</body>
+</html>
