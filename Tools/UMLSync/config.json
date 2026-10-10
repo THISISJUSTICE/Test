@@ -1,14 +1,14 @@
 {
   "diagrams": [
     {
-      "output": "Docs/CubeData.drawio",
+      "output": "Docs/Cube/CubeData.drawio",
       "sources": [
         {"path": "SampleSources/Datas", "recursive": false},
         {"path": "SampleSources/Interfaces/Datas", "recursive": false}
       ]
     },
     {
-      "output": "Docs/Cube.drawio",
+      "output": "Docs/Cube/Cube.drawio",
       "sources": [
         {"path": "SampleSources", "recursive": false}
       ]

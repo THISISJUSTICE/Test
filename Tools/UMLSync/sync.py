@@ -886,8 +886,8 @@ def sync_one(item, dry_run=False):
 def sync_all(config, dry_run=False):
     """Synchronize every configured output, then prune unlisted .drawio files.
 
-    Cleanup is limited to parent folders containing configured diagram outputs.
-    Other file types and nested folders are never deleted.
+    Cleanup recursively removes unconfigured .drawio files under Docs only.
+    Other file types and directories outside Docs are never deleted.
     """
     items = config.get('diagrams', [])
     if not isinstance(items, list):
@@ -909,35 +909,42 @@ def sync_all(config, dry_run=False):
     for item in items:
         sync_one(item, dry_run)
 
-    # Only prune direct .drawio siblings of configured outputs.
-    # This intentionally does not remove files in unrelated directories.
-    output_dirs = {target.parent for target in targets}
-    for directory in sorted(output_dirs):
-        if not directory.exists():
-            continue
-        for candidate in sorted(directory.iterdir()):
-            if candidate.is_file() and candidate.suffix.lower() == '.drawio' and candidate.resolve() not in targets:
+    # Prune every unconfigured .drawio under Docs, including nested folders.
+    # Restrict deletion to Docs; other project directories are not touched.
+    docs_dir = ROOT / 'Docs'
+    manifest_path = docs_dir / 'diagrams.json'
+    if docs_dir.exists():
+        for candidate in sorted(docs_dir.rglob('*')):
+            if (candidate.is_file() and candidate.suffix.lower() == '.drawio'
+                    and candidate.resolve() not in targets):
                 print(f'[CLEAN] {"Would remove" if dry_run else "Removing"} unconfigured diagram: {candidate.relative_to(ROOT)}', flush=True)
                 if not dry_run:
                     candidate.unlink()
 
-
-    # GitHub Pages cannot list a directory; publish a manifest for the HTML gallery.
-    # Only publish after all configured diagrams have synced and cleanup has finished.
-    docs_dir = ROOT / 'Docs'
-    manifest_path = docs_dir / 'diagrams.json'
+    # Build the gallery manifest from configured outputs, not from stale files.
+    # During dry-run, targets may not exist yet; still show the intended list.
     diagram_paths = sorted(
-        (p.relative_to(ROOT).as_posix() for p in docs_dir.rglob('*')
-         if p.is_file() and p.suffix.lower() == '.drawio'),
+        (target.relative_to(ROOT).as_posix() for target in targets
+         if target.is_relative_to(docs_dir.resolve())),
         key=str.casefold
-    ) if docs_dir.exists() else []
+    )
+    if not dry_run:
+        missing = [path for path in diagram_paths if not (ROOT / path).is_file()]
+        if missing:
+            raise FileNotFoundError(f'Configured diagrams missing after sync: {missing}')
     # Content hashes change only when each diagram's bytes change.
     # The browser can cache unchanged diagrams while refreshing edited ones.
     versions = {
         path: hashlib.sha256((ROOT / path).read_bytes()).hexdigest()[:16]
         for path in diagram_paths
     } if not dry_run else {}
-    manifest_content = json.dumps({'diagrams': diagram_paths, 'versions': versions}, ensure_ascii=False, indent=2) + '\n'
+    # Group diagrams by directory below Docs; files directly under Docs are ungrouped.
+    groups = {}
+    for path in diagram_paths:
+        relative_parent = (Path(path).parent.relative_to('Docs')).as_posix()
+        group = '' if relative_parent == '.' else relative_parent
+        groups.setdefault(group, []).append(path)
+    manifest_content = json.dumps({'diagrams': diagram_paths, 'versions': versions, 'groups': groups}, ensure_ascii=False, indent=2) + '\n'
     if dry_run:
         print(f'[DRY-RUN] Would update {manifest_path.relative_to(ROOT)} with {len(diagram_paths)} diagrams', flush=True)
     else:

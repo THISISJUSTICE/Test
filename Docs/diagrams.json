@@ -1,10 +1,16 @@
 {
   "diagrams": [
-    "Docs/Cube.drawio",
-    "Docs/CubeData.drawio"
+    "Docs/Cube/Cube.drawio",
+    "Docs/Cube/CubeData.drawio"
   ],
   "versions": {
-    "Docs/Cube.drawio": "d9dd5a803edc4dcc",
-    "Docs/CubeData.drawio": "12eee1e26f8cfaa5"
+    "Docs/Cube/Cube.drawio": "70c058ebc96551a5",
+    "Docs/Cube/CubeData.drawio": "579ecad24553371f"
+  },
+  "groups": {
+    "Cube": [
+      "Docs/Cube/Cube.drawio",
+      "Docs/Cube/CubeData.drawio"
+    ]
   }
 }
