@@ -12,12 +12,6 @@
       "sources": [
         {"path": "SampleSources", "recursive": false}
       ]
-    },
-    {
-      "output": "Docs/Cube2.drawio",
-      "sources": [
-        {"path": "SampleSources", "recursive": false}
-      ]
     }
   ]
 }
