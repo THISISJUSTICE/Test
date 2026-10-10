@@ -1,0 +1,19 @@
+{
+    "name": "Commar.CubicLand.Cube",
+    "rootNamespace": "Commar.CubicLand.Cube",
+    "references": [
+        "GUID:81880666b545d40419f7291db544c83a",
+        "GUID:196b9ba46fdb2eb43ab3eb08f42d225c",
+        "GUID:f51ebe6a0ceec4240a699833d6309b23",
+        "GUID:b0214a6008ed146ff8f122a6a9c2f6cc"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": false,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
