@@ -17,6 +17,10 @@
     h2 { font-size: 1.35rem; margin: 0 0 12px; overflow-wrap: anywhere; }
     .mxgraph { border: 1px solid #d1d5db; border-radius: 8px; min-height: 320px; overflow: hidden; background: #ffffff; color: #111111; color-scheme: light; }
     .message { color: #888; }
+    .diagram-refs { margin: 12px 0 0; font-size: .93rem; }
+    .diagram-refs strong { margin-right: 8px; }
+    .diagram-refs a { display: inline-block; margin: 0 10px 5px 0; }
+    section:target { scroll-margin-top: 16px; outline: 2px solid #93c5fd; outline-offset: 8px; border-radius: 4px; }
   </style>
 </head>
 <body>
@@ -31,6 +35,8 @@
         if (!response.ok) throw new Error(`목록 조회 실패 (HTTP ${response.status})`);
         const manifest = await response.json();
         const versions = manifest.versions || {};
+        const references = manifest.references || {};
+        const sectionByFile = new Map();
         const files = [...new Set(manifest.diagrams || [])]
           .filter(path => typeof path === 'string' && /\.drawio$/i.test(path))
           .sort((a, b) => a.localeCompare(b, 'ko'));
@@ -71,6 +77,8 @@
           for (const file of groupFiles) {
             const title = file.split('/').pop().replace(/\.drawio$/i, '');
             const section = document.createElement('section');
+            section.id = 'diagram-' + encodeURIComponent(file); 
+            sectionByFile.set(file, { section, details });
             const heading = document.createElement('h2');
             heading.textContent = title;
             const diagram = document.createElement('div');
@@ -86,11 +94,40 @@
               edit: '_blank'
             }));
             section.append(heading, diagram);
+            const linked = [...new Set(references[file] || [])].filter(path => files.includes(path) && path !== file);
+            if (linked.length) {
+              const refs = document.createElement('nav');
+              refs.className = 'diagram-refs';
+              const label = document.createElement('strong');
+              label.textContent = '참조 다이어그램:';
+              refs.append(label);
+              for (const target of linked) {
+                const link = document.createElement('a');
+                link.href = '#diagram-' + encodeURIComponent(target);
+                link.textContent = target.replace(/^Docs\//i, '').replace(/\.drawio$/i, '');
+                refs.append(link);
+              }
+              section.append(refs);
+            }
             content.append(section);
           }
           details.append(content);
           container.append(details);
         }
+        // Open the target group before scrolling to a linked diagram.
+        const navigateToHash = () => {
+          const prefix = '#diagram-';
+          if (!location.hash.startsWith(prefix)) return;
+          let file;
+          try { file = decodeURIComponent(location.hash.slice(prefix.length)); }
+          catch { return; }
+          const target = sectionByFile.get(file);
+          if (!target) return;
+          target.details.open = true;
+          target.section.scrollIntoView({ block: 'start' });
+        };
+        window.addEventListener('hashchange', navigateToHash);
+        navigateToHash();
         const script = document.createElement('script');
         script.src = 'https://viewer.diagrams.net/js/viewer-static.min.js';
         script.onerror = () => { container.insertAdjacentHTML('afterbegin', '<p class="message">draw.io 뷰어를 불러오지 못했습니다.</p>'); };

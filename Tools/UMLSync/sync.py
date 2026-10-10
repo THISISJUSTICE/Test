@@ -894,6 +894,36 @@ def sync_one(item, dry_run=False):
         target.parent.mkdir(parents=True, exist_ok=True)
         tree.write(target,encoding='utf-8',xml_declaration=True)
 
+def diagram_references(items):
+    """Find direct cross-diagram type dependencies, without transitive traversal.
+
+    A relationship is resolved locally when both endpoints are in this diagram.
+    Shared types do not, by their mere presence, link all containing diagrams.
+    The same relationship rules as the draw.io renderer are used: base types
+    and types named by visible fields/properties (not method signatures).
+    """
+    diagram_types = {item['output']: get_types(item['sources']) for item in items}
+    owners = {}
+    for path, types in diagram_types.items():
+        for name in types:
+            owners.setdefault(name, set()).add(path)
+
+    references = {}
+    for path, types in diagram_types.items():
+        linked = set()
+        for name, info in types.items():
+            dependencies = set(info['parents'])
+            for member in info['members']:
+                member_type = member.partition(' : ')[2]
+                dependencies.update(re.findall(r'\b[A-Za-z_]\w*\b', member_type))
+            for dependency in dependencies:
+                if dependency == name or dependency in types:
+                    continue  # Already represented locally; do not follow into other diagrams.
+                linked.update(owners.get(dependency, ()) - {path})
+        references[path] = sorted(linked, key=str.casefold)
+    return references
+
+
 def sync_all(config, dry_run=False):
     """Synchronize every configured output, then prune unlisted .drawio files.
 
@@ -915,6 +945,9 @@ def sync_all(config, dry_run=False):
         if target in targets:
             raise ValueError(f'Duplicate diagram output: {target}')
         targets.add(target)
+
+    # Resolve cross-diagram links from direct relationships, not shared-type transitivity.
+    references = diagram_references(items)
 
     # Generate everything first; do not delete old diagrams on a failed sync.
     for item in items:
@@ -955,7 +988,7 @@ def sync_all(config, dry_run=False):
         relative_parent = (Path(path).parent.relative_to('Docs')).as_posix()
         group = '' if relative_parent == '.' else relative_parent
         groups.setdefault(group, []).append(path)
-    manifest_content = json.dumps({'diagrams': diagram_paths, 'versions': versions, 'groups': groups}, ensure_ascii=False, indent=2) + '\n'
+    manifest_content = json.dumps({'diagrams': diagram_paths, 'versions': versions, 'groups': groups, 'references': references}, ensure_ascii=False, indent=2) + '\n'
     if dry_run:
         print(f'[DRY-RUN] Would update {manifest_path.relative_to(ROOT)} with {len(diagram_paths)} diagrams', flush=True)
     else:
