@@ -10,7 +10,7 @@
     h1 { margin-bottom: 24px; }
     section { margin: 0 0 38px; }
     h2 { font-size: 1.35rem; margin: 0 0 12px; overflow-wrap: anywhere; }
-    .mxgraph { border: 1px solid #bbb6; border-radius: 8px; min-height: 320px; overflow: hidden; }
+    .mxgraph { border: 1px solid #d1d5db; border-radius: 8px; min-height: 320px; overflow: hidden; background: #ffffff; color: #111111; color-scheme: light; }
     .message { color: #888; }
   </style>
 </head>
@@ -45,6 +45,7 @@
           diagram.setAttribute('data-mxgraph', JSON.stringify({
             url: url.href,
             nav: true,
+            background: "#ffffff",
             resize: true,
             toolbar: 'zoom layers lightbox',
             edit: '_blank'
