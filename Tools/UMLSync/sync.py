@@ -919,7 +919,7 @@ def diagram_references(items):
             for dependency in dependencies:
                 if dependency == name or dependency in types:
                     continue  # Already represented locally; do not follow into other diagrams.
-                linked.update(owners.get(dependency, ()) - {path})
+                linked.update(owners.get(dependency, set()) - {path})
         references[path] = sorted(linked, key=str.casefold)
     return references
 

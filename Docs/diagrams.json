@@ -12,5 +12,11 @@
       "Docs/Cube/Cube.drawio",
       "Docs/Cube/CubeData.drawio"
     ]
+  },
+  "references": {
+    "Docs/Cube/CubeData.drawio": [],
+    "Docs/Cube/Cube.drawio": [
+      "Docs/Cube/CubeData.drawio"
+    ]
   }
 }
