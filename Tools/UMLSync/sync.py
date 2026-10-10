@@ -921,6 +921,25 @@ def sync_all(config, dry_run=False):
                     candidate.unlink()
 
 
+    # GitHub Pages cannot list a directory; publish a manifest for the HTML gallery.
+    # Only publish after all configured diagrams have synced and cleanup has finished.
+    docs_dir = ROOT / 'Docs'
+    manifest_path = docs_dir / 'diagrams.json'
+    diagram_paths = sorted(
+        (p.relative_to(ROOT).as_posix() for p in docs_dir.rglob('*')
+         if p.is_file() and p.suffix.lower() == '.drawio'),
+        key=str.casefold
+    ) if docs_dir.exists() else []
+    manifest_content = json.dumps({'diagrams': diagram_paths}, ensure_ascii=False, indent=2) + '\n'
+    if dry_run:
+        print(f'[DRY-RUN] Would update {manifest_path.relative_to(ROOT)} with {len(diagram_paths)} diagrams', flush=True)
+    else:
+        docs_dir.mkdir(parents=True, exist_ok=True)
+        if not manifest_path.exists() or manifest_path.read_text(encoding='utf-8') != manifest_content:
+            manifest_path.write_text(manifest_content, encoding='utf-8')
+        print(f'[INFO] Updated {manifest_path.relative_to(ROOT)}: {len(diagram_paths)} diagrams', flush=True)
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--dry-run', action='store_true')
