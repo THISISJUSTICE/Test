@@ -11,16 +11,7 @@
       "output": "Docs/Cube/Cube.drawio",
       "sources": [
         {"path": "SampleSources", "recursive": false},
-        {"path": "SampleSources/Interfaces/ICubeCollisionResolver.cs"},
-        {"path": "SampleSources/Interfaces/ICubeFactory.cs"},
-        {"path": "SampleSources/Interfaces/ICubeMotionAdjuster.cs"},
-        {"path": "SampleSources/Interfaces/ICubeTrait.cs"},
-        {"path": "SampleSources/Interfaces/IGolemFactory.cs"},
-        {"path": "SampleSources/Interfaces/IGolemGeometryProvider.cs"},
-        {"path": "SampleSources/Interfaces/IGolemMotionController.cs"},
-        {"path": "SampleSources/Interfaces/IGolemObject.cs"},
-        {"path": "SampleSources/Interfaces/IGroundSensor.cs"},
-        {"path": "SampleSources/Interfaces/IOrphanedCubeHandler.cs"}
+        {"path": "SampleSources/Interfaces", "recursive": false}
       ]
     },
     {

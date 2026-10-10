@@ -5,9 +5,9 @@
     "Docs/Cube/Temp.drawio"
   ],
   "versions": {
-    "Docs/Cube/Cube.drawio": "d963311aeef36bd9",
+    "Docs/Cube/Cube.drawio": "7c7e3661ba72973d",
     "Docs/Cube/CubeData.drawio": "bf81d3f697a38033",
-    "Docs/Cube/Temp.drawio": "2ca3a022267d8113"
+    "Docs/Cube/Temp.drawio": "bb4058c071d7473c"
   },
   "groups": {
     "Cube": [
@@ -19,8 +19,7 @@
   "references": {
     "Docs/Cube/CubeData.drawio": [],
     "Docs/Cube/Cube.drawio": [
-      "Docs/Cube/CubeData.drawio",
-      "Docs/Cube/Temp.drawio"
+      "Docs/Cube/CubeData.drawio"
     ],
     "Docs/Cube/Temp.drawio": [
       "Docs/Cube/Cube.drawio",
