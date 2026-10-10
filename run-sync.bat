@@ -1,10 +1,13 @@
 @echo off
 cd /d "%~dp0"
-py -3 Tools\UMLSync\sync.py %*
-if errorlevel 1 (
-  echo [ERROR] UML sync failed.
-  pause
-  exit /b 1
-)
-echo UML sync finished. Review the drawio diff before committing.
+
+echo [CHECK] Current directory: %CD%
+echo [CHECK] Python script:
+dir "Tools\UMLSync\sync.py"
+
+echo.
+echo [RUN]
+python "Tools\UMLSync\sync.py"
+
+echo.
 pause
