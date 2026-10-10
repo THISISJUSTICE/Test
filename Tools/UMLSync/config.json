@@ -1,18 +1,16 @@
 {
   "diagrams": [
     {
-      "output": "Docs/Sample.drawio",
+      "output": "Docs/CubeData.drawio",
       "sources": [
         {"path": "SampleSources/Datas", "recursive": false},
         {"path": "SampleSources/Interfaces/Datas", "recursive": false}
       ]
     },
     {
-      "output": "Docs/Sample2.drawio",
+      "output": "Docs/Cube.drawio",
       "sources": [
-        {"path": "SampleSources", "recursive": false},
-        {"path": "SampleSources/Interfaces", "recursive": false},
-        {"path": "SampleSources/Singletons", "recursive": false}
+        {"path": "SampleSources", "recursive": false}
       ]
     }
   ]
