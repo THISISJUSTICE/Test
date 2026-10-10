@@ -4,6 +4,7 @@ Explicit source directories or individual .cs files; existing hand-made edges ar
 This is a lightweight C# parser, not Roslyn: complex declarations may need manual review.
 """
 import argparse
+import hashlib
 import copy
 import html
 import heapq
@@ -930,7 +931,13 @@ def sync_all(config, dry_run=False):
          if p.is_file() and p.suffix.lower() == '.drawio'),
         key=str.casefold
     ) if docs_dir.exists() else []
-    manifest_content = json.dumps({'diagrams': diagram_paths}, ensure_ascii=False, indent=2) + '\n'
+    # Content hashes change only when each diagram's bytes change.
+    # The browser can cache unchanged diagrams while refreshing edited ones.
+    versions = {
+        path: hashlib.sha256((ROOT / path).read_bytes()).hexdigest()[:16]
+        for path in diagram_paths
+    } if not dry_run else {}
+    manifest_content = json.dumps({'diagrams': diagram_paths, 'versions': versions}, ensure_ascii=False, indent=2) + '\n'
     if dry_run:
         print(f'[DRY-RUN] Would update {manifest_path.relative_to(ROOT)} with {len(diagram_paths)} diagrams', flush=True)
     else:
