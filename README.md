@@ -9,3 +9,5 @@
 README에는 `[구조도 보기](https://<GitHub-사용자명>.github.io/<저장소명>/)` 링크를 추가하세요.
 
 외부 diagrams.net viewer 스크립트를 사용하므로 온라인 연결이 필요합니다.
+
+https://thisisjustice.github.io/Test/
