@@ -173,33 +173,44 @@ def get_types(paths):
                     print(f'[WARN] Duplicate type {name} in {file}; first wins', file=sys.stderr); continue
                 types[name] = {'kind':kind, 'parents':parent_names, 'members':members, 'methods':methods,
                                'mono': 'MonoBehaviour' in parent_names, 'file':str(file)}
-    suppress_inherited_methods(types)
+    suppress_inherited_members(types)
     return types
 
 
-def suppress_inherited_methods(types):
-    """Hide methods whose signatures are declared on a parsed ancestor.
+def suppress_inherited_members(types):
+    """Hide members already declared on any parsed ancestor, including overrides/new.
 
-    Keep overloads with distinct parameter types. External ancestors are unknown.
+    Fields/properties are matched by name, methods by name and parameter types.
+    An overload with a different parameter list remains visible. Only ancestors
+    included in this diagram's parsed sources can be inspected.
     """
-    originals = {name: set(info['methods']) for name, info in types.items()}
+    original_members = {name: tuple(info['members']) for name, info in types.items()}
+    original_methods = {name: tuple(info['methods']) for name, info in types.items()}
 
-    def signature(method):
-        # Visibility is intentionally ignored; C# override may change its modifiers.
-        return method[2:].split(' : ', 1)[0].strip()
+    def member_key(member):
+        # '+ PropertyName : Type' -- type may differ for a hiding declaration.
+        return member.removeprefix('+ ').split(' : ', 1)[0].strip()
 
-    def ancestor_signatures(name, visited):
-        result = set()
+    def method_key(method):
+        # '+ Method(Type, Type) : ReturnType' -- return type is not an overload key.
+        return method.removeprefix('+ ').split(' : ', 1)[0].strip()
+
+    def inherited_keys(name, visited):
+        members, methods = set(), set()
         for parent in types[name]['parents']:
             if parent not in types or parent in visited:
                 continue
-            result.update(signature(m) for m in originals[parent])
-            result.update(ancestor_signatures(parent, visited | {parent}))
-        return result
+            members.update(member_key(m) for m in original_members[parent])
+            methods.update(method_key(m) for m in original_methods[parent])
+            ancestor_members, ancestor_methods = inherited_keys(parent, visited | {parent})
+            members.update(ancestor_members)
+            methods.update(ancestor_methods)
+        return members, methods
 
     for name, info in types.items():
-        inherited = ancestor_signatures(name, {name})
-        info['methods'] = [m for m in info['methods'] if signature(m) not in inherited]
+        inherited_members, inherited_methods = inherited_keys(name, {name})
+        info['members'] = [m for m in info['members'] if member_key(m) not in inherited_members]
+        info['methods'] = [m for m in info['methods'] if method_key(m) not in inherited_methods]
 
 
 def get_name(cell):
@@ -218,7 +229,7 @@ def title(info, name):
 
 
 def lines_html(lines):
-    return '<div>' + '</div><div>'.join(html.escape(x) for x in lines) + '</div>' if lines else ''
+    return ''.join('<div style="height:20px;line-height:20px;margin:0;padding:0;white-space:nowrap">' + html.escape(x) + '</div>' for x in lines) if lines else ''
 
 
 def geom(cell): return cell.find('mxGeometry')
@@ -234,11 +245,11 @@ def create_cell(graph, cell_id, value, style, parent, x, y, w, h):
 def set_section(graph, parent, existing, suffix, content, y, height, width):
     if existing is None:
         existing = create_cell(graph, parent.get('id') + '-' + suffix, content,
-            'text;fontSize=14;strokeColor=#000000;fillColor=none;align=left;verticalAlign=middle;spacingTop=2;spacingBottom=2;spacingLeft=6;spacingRight=6;whiteSpace=wrap;overflow=hidden;html=1;',
+            'text;fontSize=14;strokeColor=#000000;fillColor=none;align=left;verticalAlign=middle;spacingTop=4;spacingBottom=4;spacingLeft=6;spacingRight=6;whiteSpace=wrap;overflow=hidden;html=1;',
             parent.get('id'), 0, y, width, height)
     else:
         existing.set('value', content)
-        existing.set('style', 'text;fontSize=14;strokeColor=#000000;fillColor=none;align=left;verticalAlign=middle;spacingTop=2;spacingBottom=2;spacingLeft=6;spacingRight=6;whiteSpace=wrap;overflow=hidden;html=1;')
+        existing.set('style', 'text;fontSize=14;strokeColor=#000000;fillColor=none;align=left;verticalAlign=middle;spacingTop=4;spacingBottom=4;spacingLeft=6;spacingRight=6;whiteSpace=wrap;overflow=hidden;html=1;')
         g = geom(existing)
         if g is not None:
             g.set('x', '0'); g.set('y', str(y)); g.set('width', str(width)); g.set('height', str(height))
@@ -299,13 +310,13 @@ def estimate_width(name, info):
             elif c.isdigit(): width += 6.7
             else: width += 6.1
         return width
-    # 6px left/right text insets + 8px visual breathing room.
-    body_width = max((pixels(t) * (14 / 12) for t in info['members'] + info['methods']), default=0)
+    # Preserve glyph-based sizing with a small 4% correction for body text.
+    body_width = max((pixels(t) * (14 / 12) * 1.04 for t in info['members'] + info['methods']), default=0)
     # Heading 4 is bold and may render wider than the 12px baseline estimate.
     # Give titles their own font scaling and additional horizontal insets.
     title_width = max(pixels(name) * (16 / 12) * 1.18,
                       pixels('«' + label + '»') * (16 / 12) if label else 0)
-    return max(72, int(math.ceil(max(body_width + 20, title_width + 36))))
+    return max(72, int(math.ceil(max(body_width + 24, title_width + 36))))
 
 
 def segment_intersects_rect(x1,y1,x2,y2,rx,ry,rw,rh):
@@ -786,8 +797,8 @@ def sync_one(item, dry_run=False):
         children.sort(key=lambda c: float(geom(c).get('y','0')) if geom(c) is not None else 0)
         old_sections = [(c.get('id'), c.get('value'), c.get('style'), dict(geom(c).attrib) if geom(c) is not None else {}) for c in children]
         width = estimate_width(name, info)
-        member_h = 20 * len(info['members']) + 8 if info['members'] else 0
-        method_h = 20 * len(info['methods']) + 8 if info['methods'] else 0
+        member_h = 20 * len(info['members']) + 16 if info['members'] else 0
+        method_h = 20 * len(info['methods']) + 16 if info['methods'] else 0
         sections = []
         if info['members']: sections.append(('members', lines_html(info['members']), member_h))
         if info['methods']: sections.append(('methods', lines_html(info['methods']), method_h))
