@@ -1,0 +1,11 @@
+{
+  "diagrams": [
+    {
+      "output": "Docs/Sample.drawio",
+      "sources": [
+        {"path": "SampleSources/Cube", "recursive": false},
+        {"path": "SampleSources/Cube/Interfaces", "recursive": false}
+      ]
+    }
+  ]
+}

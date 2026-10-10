@@ -15,7 +15,7 @@
   <div id="diagram" class="mxgraph"></div>
   <script>
     // GitHub Pages가 제공하는 현재 URL을 기준으로 원본 .drawio의 절대 주소 생성
-    const diagramUrl = new URL('./Docs/Sample.drawio', document.baseURI).href;
+    const diagramUrl = new URL('./Docs/Sample.drawio?v=' + Date.now(), document.baseURI).href;
     document.getElementById('diagram').setAttribute('data-mxgraph', JSON.stringify({
       url: diagramUrl,
       nav: true,
