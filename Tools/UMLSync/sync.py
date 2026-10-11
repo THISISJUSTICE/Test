@@ -1,9 +1,12 @@
 """Synchronize C# type declarations with monochrome three-compartment draw.io UML.
+Graphviz dot must be installed and on PATH for automatic layout.
 Python 3.9+, standard library only. Back up your .drawio before first use.
 Explicit source directories or individual .cs files; existing hand-made edges are preserved.
 This is a lightweight C# parser, not Roslyn: complex declarations may need manual review.
 """
 import argparse
+import subprocess
+import shutil
 import hashlib
 import copy
 import html
@@ -725,6 +728,397 @@ def remove_legacy_demo_nodes(graph, types):
     return removed
 
 
+def graphviz_layout(graph, existing, desired, edges_by_pair):
+    """Layout managed UML nodes using Graphviz DOT JSON geometry.
+
+    Graphviz coordinates are in points, origin at lower left. draw.io uses
+    pixels with origin at upper left. We use a common scale of 96/72.
+    """
+    if not existing:
+        return 0
+    dot_bin = shutil.which('dot')
+    if not dot_bin:
+        raise RuntimeError('Graphviz dot executable not found. Add Graphviz\\bin to PATH and reopen terminal.')
+
+    # DOT names are generated IDs rather than raw C# identifiers.
+    import json as _json
+    names = {name: 'n' + str(i) for i, name in enumerate(sorted(existing))}
+    scale = 96.0 / 72.0
+    # Reserve a safety envelope around each visible class. Graphviz routes
+    # outside the enlarged box, while draw.io retains the original dimensions.
+    clearance = 35.0
+    port_gap = 24.0
+    # Graphviz is sized in inches. Matching actual UML box dimensions is
+    # essential; otherwise Graphviz routes through the drawn draw.io boxes.
+    lines = [
+        'digraph UML {',
+        'graph [rankdir=TB, splines=polyline, overlap=false, nodesep=0.9, ranksep=1.15, pad=0.3, outputorder=edgesfirst, remincross=true];',
+        'node [shape=box, fixedsize=true, margin=0];',
+        'edge [arrowsize=0.8];',
+    ]
+    for name in sorted(existing):
+        g = geom(existing[name])
+        w = float(g.get('width', '180'))
+        h = float(g.get('height', '70'))
+        lines.append(f'{names[name]} [width={(w+2*clearance)/96:.6f}, height={(h+2*clearance)/96:.6f}, label=""];')
+    for (source, target), kind in sorted(desired.items()):
+        # Layout manual edges too, so node positions account for their connections.
+        attrs = ' [arrowhead=empty]' if kind == 'inheritance' else ''
+        lines.append(f'{names[source]} -> {names[target]}{attrs};')
+    lines.append('}')
+    try:
+        result = subprocess.run([dot_bin, '-Tjson'], input='\n'.join(lines),
+                                text=True, encoding='utf-8', capture_output=True,
+                                check=True, timeout=90)
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError('Graphviz layout failed: ' + exc.stderr.strip()) from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError('Graphviz layout timed out (90s)') from exc
+    data = _json.loads(result.stdout)
+    bb = [float(v) for v in data['bb'].split(',')]
+    x0, y0, x1, y1 = bb
+    # Move diagram to positive canvas coordinates with consistent padding.
+    pad = 40.0
+    def xy(point):
+        x, y = point
+        return ((x - x0) * scale + pad, (y1 - y) * scale + pad)
+
+    objects = {obj['name']: obj for obj in data.get('objects', [])}
+    for name, cell in existing.items():
+        obj = objects.get(names[name])
+        if obj is None:
+            raise RuntimeError('Graphviz omitted node: ' + name)
+        cx, cy = (float(v) for v in obj['pos'].split(','))
+        w = float(geom(cell).get('width'))
+        h = float(geom(cell).get('height'))
+        px, py = xy((cx, cy))
+        if managed(cell):
+            geom(cell).set('x', str(round(px - w/2, 2)))
+            geom(cell).set('y', str(round(py - h/2, 2)))
+
+    # JSON edges reference _gvid indices; parallel edges are distinguished by
+    # source/target (our desired dictionary contains one edge per pair).
+    reverse = {obj['_gvid']: obj['name'] for obj in data.get('objects', [])}
+    graph_name_to_type = {value: key for key, value in names.items()}
+    routes = {}
+    for edge in data.get('edges', []):
+        source = graph_name_to_type.get(reverse.get(edge['tail']))
+        target = graph_name_to_type.get(reverse.get(edge['head']))
+        if source is not None and target is not None:
+            routes[(source, target)] = edge.get('pos', '')
+
+    def parse_route(pos):
+        """Read Graphviz polyline vertices without smoothing them into a spline."""
+        points = []
+        startpoint = endpoint = None
+        for token in pos.split():
+            if token.startswith('e,'):
+                endpoint = tuple(map(float, token[2:].split(',')))
+            elif token.startswith('s,'):
+                startpoint = tuple(map(float, token[2:].split(',')))
+            else:
+                points.append(tuple(map(float, token.split(','))))
+        if startpoint:
+            points.insert(0, startpoint)
+        if endpoint:
+            points.append(endpoint)
+        return [xy(pt) for pt in points]
+
+    def compact_route(points, tolerance=1.5):
+        """Remove near-duplicate and nearly-collinear intermediate points."""
+        clean = []
+        for p in points:
+            if not clean or math.dist(clean[-1], p) > tolerance:
+                clean.append(p)
+        if len(clean) <= 2:
+            return clean
+        result = [clean[0]]
+        for i in range(1, len(clean)-1):
+            a, b, c = result[-1], clean[i], clean[i+1]
+            dx, dy = c[0]-a[0], c[1]-a[1]
+            length = math.hypot(dx, dy)
+            if length > 0 and abs(dx*(b[1]-a[1])-dy*(b[0]-a[0]))/length < tolerance:
+                # Only remove points that lie between their neighbors.
+                if (b[0]-a[0])*dx+(b[1]-a[1])*dy >= 0 and (b[0]-c[0])*dx+(b[1]-c[1])*dy <= 0:
+                    continue
+            result.append(b)
+        result.append(clean[-1])
+        return result
+
+    # Collect Graphviz's preferred approach side for each endpoint, then
+    # spread ports along that side rather than piling arrows onto one point.
+    from collections import defaultdict
+    endpoint_groups = defaultdict(list)
+    edge_routes = {}
+    for pair in edges_by_pair:
+        route = parse_route(routes.get(pair, ''))
+        if not route:
+            raise RuntimeError(f'Graphviz did not return edge path for {pair}')
+        edge_routes[pair] = route
+        for endpoint_index, name in ((0, pair[0]), (-1, pair[1])):
+            g = geom(existing[name])
+            x, y = route[endpoint_index]
+            left, top = float(g.get('x')), float(g.get('y'))
+            w, h = float(g.get('width')), float(g.get('height'))
+            cx, cy = left+w/2, top+h/2
+            dx, dy = x-cx, y-cy
+            # The enlarged Graphviz node is rectangular. Infer its exit side
+            # from the normalized displacement rather than absolute distance.
+            side = ('right' if dx >= 0 else 'left') if abs(dx)/(w/2+clearance) >= abs(dy)/(h/2+clearance) else ('bottom' if dy >= 0 else 'top')
+            coordinate = y if side in ('left','right') else x
+            endpoint_groups[(name, side)].append((coordinate, pair, endpoint_index))
+
+    ports = {}
+    for (name, side), entries in endpoint_groups.items():
+        g = geom(existing[name])
+        left, top = float(g.get('x')), float(g.get('y'))
+        w, h = float(g.get('width')), float(g.get('height'))
+        length = h if side in ('left','right') else w
+        count = len(entries)
+        entries.sort(key=lambda entry: (entry[0], entry[1]))
+        # At high degree the physical side limits achievable port spacing.
+        actual_gap = min(port_gap, max(0., (length-20)/max(1,count-1)))
+        for i, (_, pair, endpoint_index) in enumerate(entries):
+            offset = length/2 + (i-(count-1)/2)*actual_gap
+            offset = max(8., min(length-8., offset))
+            if side == 'left': pt = (left, top+offset)
+            elif side == 'right': pt = (left+w, top+offset)
+            elif side == 'top': pt = (left+offset, top)
+            else: pt = (left+offset, top+h)
+            ports[(pair, endpoint_index)] = pt
+
+    def perimeter_stub(point, side, length):
+        x, y = point
+        if side == 'left': return (x-length, y)
+        if side == 'right': return (x+length, y)
+        if side == 'top': return (x, y-length)
+        return (x, y+length)
+
+    def port_side(point, geo):
+        x, y = point
+        left, top = float(geo.get('x')), float(geo.get('y'))
+        w, h = float(geo.get('width')), float(geo.get('height'))
+        distances = [(abs(x-left), 'left'), (abs(x-(left+w)), 'right'),
+                     (abs(y-top), 'top'), (abs(y-(top+h)), 'bottom')]
+        return min(distances)[1]
+
+    def segment_hits_rect(a, b, rect, margin=2.0):
+        x, y, w, h = rect
+        # Liang-Barsky segment clipping for an expanded axis-aligned rectangle.
+        x -= margin; y -= margin; w += 2*margin; h += 2*margin
+        dx, dy = b[0]-a[0], b[1]-a[1]
+        t0, t1 = 0.0, 1.0
+        for p, q in ((-dx, a[0]-x), (dx, x+w-a[0]),
+                     (-dy, a[1]-y), (dy, y+h-a[1])):
+            if abs(p) < 1e-9:
+                if q < 0: return False
+            else:
+                t = q/p
+                if p < 0: t0 = max(t0, t)
+                else: t1 = min(t1, t)
+                if t0 > t1: return False
+        return True
+
+    def safe_stub(port, side, max_length, current_name):
+        # Keep the terminal segment perpendicular, without driving it into
+        # another visible class. The surrounding Graphviz envelope is 35px.
+        for length in (max_length, max_length*.75, max_length*.5, 8.0):
+            candidate = perimeter_stub(port, side, length)
+            blocked = False
+            for name, cell in existing.items():
+                if name == current_name: continue
+                g = geom(cell)
+                rect = tuple(float(g.get(k)) for k in ('x','y','width','height'))
+                if segment_hits_rect(port, candidate, rect, 5.0):
+                    blocked = True
+                    break
+            if not blocked:
+                return candidate
+        return perimeter_stub(port, side, 4.0)
+
+    # Preserve Graphviz's layout and terminal stubs, but give parallel middle
+    # stretches some breathing room. Perpendicular crossings are allowed.
+    min_edge_gap = 14.0
+    plans = {}
+    for pair, edge in edges_by_pair.items():
+        route = compact_route(edge_routes[pair])
+        if not route:
+            raise RuntimeError(f'Graphviz did not return edge path for {pair}')
+        source_geo, target_geo = geom(existing[pair[0]]), geom(existing[pair[1]])
+        start_port, end_port = ports[(pair, 0)], ports[(pair, -1)]
+        start_side = port_side(start_port, source_geo)
+        end_side = port_side(end_port, target_geo)
+        start_stub = safe_stub(start_port, start_side, 20.0, pair[0])
+        end_stub = safe_stub(end_port, end_side, 20.0, pair[1])
+        middle = compact_route(route)
+        points = compact_route([start_port, start_stub] + middle + [end_stub, end_port], tolerance=1.0)
+        plans[pair] = (edge, points, start_port, end_port, source_geo, target_geo)
+
+    def segment_distance(a, b, c, d):
+        # Exact shortest distance for two straight segments, including crossings.
+        def cross(u, v): return u[0]*v[1] - u[1]*v[0]
+        u = (b[0]-a[0], b[1]-a[1]); v = (d[0]-c[0], d[1]-c[1])
+        w = (c[0]-a[0], c[1]-a[1])
+        den = cross(u, v)
+        if abs(den) > 1e-8:
+            t = cross(w, v)/den; q = cross(w, u)/den
+            if 0 <= t <= 1 and 0 <= q <= 1:
+                return 0.0
+        def point_distance(p, x, y):
+            dx, dy = y[0]-x[0], y[1]-x[1]
+            t = max(0., min(1., ((p[0]-x[0])*dx+(p[1]-x[1])*dy)/(dx*dx+dy*dy))) if dx*dx+dy*dy > 1e-9 else 0.
+            return math.dist(p, (x[0]+t*dx, x[1]+t*dy))
+        return min(point_distance(a,c,d), point_distance(b,c,d),
+                   point_distance(c,a,b), point_distance(d,a,b))
+
+    def near_parallel(a, b, c, d):
+        u = (b[0]-a[0], b[1]-a[1]); v = (d[0]-c[0], d[1]-c[1])
+        lu, lv = math.hypot(*u), math.hypot(*v)
+        return lu > 18 and lv > 18 and abs(u[0]*v[1]-u[1]*v[0])/(lu*lv) < 0.22
+
+    def route_penalty(pair, points, other_routes):
+        # Only penalize parallel crowding, not perpendicular crossings.
+        penalty = 0.0
+        for i in range(len(points)-1):
+            a, b = points[i:i+2]
+            if math.dist(a,b) < 1: continue
+            for other, other_points in other_routes.items():
+                if other == pair: continue
+                for c, d in zip(other_points, other_points[1:]):
+                    if not near_parallel(a,b,c,d): continue
+                    distance = segment_distance(a,b,c,d)
+                    if distance < min_edge_gap:
+                        # Stronger penalty for long stretches sharing a corridor.
+                        penalty += (min_edge_gap-distance)**2 * min(3., math.dist(a,b)/45.)
+        return penalty
+
+    def valid_route(pair, points):
+        # Protect the existing node clearance when modifying Graphviz paths.
+        for a,b in zip(points, points[1:]):
+            for name, cell in existing.items():
+                if name in pair: continue
+                g = geom(cell)
+                rect = tuple(float(g.get(k)) for k in ('x','y','width','height'))
+                if segment_hits_rect(a,b,rect, 8.): return False
+        return True
+
+    # Only displace long interior segments. Keep both endpoint stubs intact;
+    # any shift creates short transition segments, not a new A* route.
+    # Optimize against the already accepted routes, deterministically.
+    accepted = {pair: list(plan[1]) for pair, plan in plans.items()}
+    for _ in range(2):
+        changed = False
+        for pair in sorted(accepted):
+            points = accepted[pair]
+            if len(points) < 5: continue
+            baseline = route_penalty(pair, points, accepted)
+            if baseline < 0.1: continue
+            best, best_score = points, baseline
+            for i in range(2, len(points)-2):
+                a, b = points[i], points[i+1]
+                dx,dy = b[0]-a[0],b[1]-a[1]
+                length = math.hypot(dx,dy)
+                if length < 28: continue
+                nx,ny = -dy/length, dx/length
+                for amount in (-18., -14., 14., 18.):
+                    shifted_a = (a[0]+nx*amount, a[1]+ny*amount)
+                    shifted_b = (b[0]+nx*amount, b[1]+ny*amount)
+                    candidate = points[:i] + [shifted_a,shifted_b] + points[i+2:]
+                    if not valid_route(pair,candidate): continue
+                    # Prefer smaller displacements and fewer new sharp turns.
+                    score = route_penalty(pair,candidate,accepted) + abs(amount)*1.8
+                    if score + 0.1 < best_score:
+                        best, best_score = candidate, score
+            if best is not points:
+                accepted[pair] = best
+                changed = True
+        if not changed: break
+
+    # Final route cleanup: remove needless interior detours without touching
+    # the perpendicular entry/exit stubs. A shortcut is accepted only when it
+    # clears every unrelated UML box and does not increase parallel-edge
+    # crowding. This runs after spacing, so it cannot silently undo it.
+    def route_length(points):
+        return sum(math.dist(a, b) for a, b in zip(points, points[1:]))
+
+    def simplify_detours(pair, points, other_routes):
+        points = list(points)
+        # Index 0/1 = source port/stub; -2/-1 = target stub/port.
+        # Keep those fixed to preserve perpendicular terminal directions.
+        for _ in range(max(0, len(points) - 4)):
+            if len(points) < 5:
+                break
+            base_penalty = route_penalty(pair, points, other_routes)
+            base_length = route_length(points)
+            best = None
+            best_gain = 0.0
+            for i in range(2, len(points) - 2):
+                for j in range(i + 1, len(points) - 1):
+                    # Replace the subpath from i-1 through j with one segment.
+                    # i and j must not remove either terminal stub.
+                    candidate = points[:i] + points[j:]
+                    if not valid_route(pair, candidate):
+                        continue
+                    candidate_penalty = route_penalty(pair, candidate, other_routes)
+                    # Do not sacrifice the spacing achieved by the previous pass.
+                    if candidate_penalty > base_penalty + 0.01:
+                        continue
+                    candidate_length = route_length(candidate)
+                    if candidate_length > base_length + 0.5:
+                        continue
+                    # Reward removing turns, shortening the path and reducing
+                    # crowding. A shortcut may still cross another edge; only
+                    # parallel close-running sections are penalized by design.
+                    removed = j - i
+                    gain = removed * 12.0 + (base_length - candidate_length) * 0.15 + (base_penalty - candidate_penalty)
+                    if gain > best_gain + 0.01:
+                        best, best_gain = candidate, gain
+            if best is None:
+                break
+            points = best
+        return points
+
+    # Deterministic iterative pass: routes simplified earlier become the
+    # reference for later routes. No global re-routing or A* retry is needed.
+    for _ in range(2):
+        changed = False
+        for pair in sorted(accepted):
+            before = accepted[pair]
+            after = simplify_detours(pair, before, accepted)
+            if len(after) < len(before):
+                accepted[pair] = after
+                changed = True
+        if not changed:
+            break
+
+    for pair, (edge, _, start_port, end_port, source_geo, target_geo) in plans.items():
+        def anchor(point, g):
+            x, y = point
+            left = float(g.get('x')); top = float(g.get('y'))
+            width = float(g.get('width')); height = float(g.get('height'))
+            return (max(0., min(1., (x-left)/width)), max(0., min(1., (y-top)/height)))
+        sx, sy = anchor(start_port, source_geo)
+        tx, ty = anchor(end_port, target_geo)
+        kind = desired[pair]
+        arrow = ('endArrow=block;endFill=0;' if kind == 'inheritance'
+                 else 'endArrow=classic;endFill=1;')
+        edge.set('style', 'edgeStyle=none;curved=0;rounded=0;html=1;strokeColor=#000000;'
+                          'exitPerimeter=0;entryPerimeter=0;'
+                          f'exitX={sx:.5f};exitY={sy:.5f};entryX={tx:.5f};entryY={ty:.5f};'
+                          + ('dashed=1;' if kind == 'inheritance' else '') + arrow)
+        geometry = edge.find('mxGeometry')
+        if geometry is None:
+            geometry = ET.SubElement(edge, 'mxGeometry', {'relative':'1', 'as':'geometry'})
+        for child in list(geometry): geometry.remove(child)
+        geometry.set('relative', '1'); geometry.set('as', 'geometry')
+        waypoints = accepted[pair][1:-1]
+        if waypoints:
+            arr = ET.SubElement(geometry, 'Array', {'as':'points'})
+            for x, y in waypoints:
+                ET.SubElement(arr, 'mxPoint', {'x':str(round(x, 2)), 'y':str(round(y, 2))})
+    return len(edges_by_pair)
+
+
 def sync_one(item, dry_run=False):
     target = ROOT / item['output']
     if target.exists():
@@ -870,25 +1264,8 @@ def sync_one(item, dry_run=False):
         for attr in ('x','y','width','height'): geometry.attrib.pop(attr, None)
         geometry.set('relative','1'); geometry.set('as','geometry')
         edges_by_pair[(source_name,target_name)] = edge
-    # The graph is only written after a complete successful routing pass.
-    # Re-layout on failure, gradually opening corridors; no invalid partial XML is saved.
-    attempts = (85, 120, 165, 220, 300)
-    routed = 0
-    for attempt, gap in enumerate(attempts, 1):
-        auto_layout(graph, existing, types, desired, gap=gap)
-        try:
-            routed, detours = route_edges(graph, existing, desired, edges_by_pair)
-        except RoutingFailure as exc:
-            print(f'[WARN] Layout {attempt}/{len(attempts)} (gap={gap}px): {exc}; expanding spacing...', flush=True)
-            continue
-        if detours and attempt < len(attempts):
-            print(f'[WARN] Layout {attempt}/{len(attempts)}: {len(detours)} excessive detours; expanding spacing...', flush=True)
-            continue
-        if detours:
-            print(f'[WARN] {len(detours)} long routes remain: {detours[:4]}', flush=True)
-        break
-    else:
-        raise RoutingFailure(f'Unable to route after {len(attempts)} spacing attempts; last gap={attempts[-1]}px')
+    # Graphviz owns both node placement and edge routing. No SVG is produced.
+    routed = graphviz_layout(graph, existing, desired, edges_by_pair)
     print(f'{item["output"]}: {len(types)} types, +{additions} nodes, ~{updates} updates, +{edges} edges, {routed} routed, -{removed} obsolete elements')
     if not dry_run:
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -919,7 +1296,7 @@ def diagram_references(items):
             for dependency in dependencies:
                 if dependency == name or dependency in types:
                     continue  # Already represented locally; do not follow into other diagrams.
-                linked.update(owners.get(dependency, set()) - {path})
+                linked.update(set(owners.get(dependency, ())) - {path})
         references[path] = sorted(linked, key=str.casefold)
     return references
 
